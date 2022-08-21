@@ -1,87 +1,96 @@
 #include <iostream>
 #include <string>
+#include <utility>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <linux/fb.h>
+#include <cstring>
+#include <chrono>
 
 class Device {
 private:
-    const int m_width, m_height, m_bytesPerPixel;
-    std::string m_devicePath;
+    const fb_var_screeninfo m_screenInfo;
+    const std::string m_devicePath;
+    const unsigned int m_bytesOnLine;
+    const uint8_t m_bytesPerPixel;
     void* m_addr{nullptr};
 
-public:
-    Device(int width, int height, int bitsPerPixel, int deviceNumber)
-            : m_width(width), m_height(height), m_bytesPerPixel(bitsPerPixel/8) {
-        m_devicePath = std::string("/dev/fb") + std::to_string(deviceNumber);
+    int createPixel(const uint8_t& red, const uint8_t& green, const uint8_t& blue, const uint8_t& transparency) const {
+        uint8_t redBits = red >> (8 - m_screenInfo.red.length);
+        if (m_screenInfo.red.msb_right != 0) reverseByte(redBits);
+        uint8_t greenBits = green >> (8 - m_screenInfo.green.length);
+        if (m_screenInfo.green.msb_right != 0) reverseByte(greenBits);
+        uint8_t blueBits = blue >> (8 - m_screenInfo.blue.length);
+        if (m_screenInfo.blue.msb_right != 0) reverseByte(blueBits);
+        uint8_t transparentBits = transparency >> (8 - m_screenInfo.transp.length);
+        if (m_screenInfo.transp.msb_right != 0) reverseByte(transparentBits);
+
+        int pixel = 0;
+        if (m_screenInfo.red.length > 0) pixel += redBits << m_screenInfo.red.offset;
+        if (m_screenInfo.green.length > 0) pixel += greenBits << m_screenInfo.green.offset;
+        if (m_screenInfo.blue.length > 0) pixel += blueBits << m_screenInfo.blue.offset;
+        if (m_screenInfo.transp.length > 0) pixel += transparentBits << m_screenInfo.transp.offset;
+        return pixel;
     }
+
+    static void reverseByte(uint8_t& b) {
+        b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+        b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+        b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+    }
+
+    static uint8_t decreaseBitLength(const uint8_t& sourceEightBit, const uint8_t& numberOfTargetBits) {
+        uint8_t bits;
+        if (numberOfTargetBits > 8) throw std::runtime_error("Illegal number of target bits - must be less than or equal to 8");
+        else if (numberOfTargetBits < 8) bits = sourceEightBit >> (8 - numberOfTargetBits);
+        else bits = sourceEightBit;
+        return bits;
+    }
+
+public:
+    Device(const fb_var_screeninfo screenInfo, std::string devicePath)
+            : m_screenInfo(screenInfo), m_devicePath(std::move(devicePath)),
+              m_bytesPerPixel(screenInfo.bits_per_pixel / 8), m_bytesOnLine(screenInfo.xres * (screenInfo.bits_per_pixel / 8)) {}
 
     std::string getDevicePath() {
         return m_devicePath;
     }
 
     unsigned int getWidth() const {
-        return m_width;
+        return m_screenInfo.xres;
     }
 
     unsigned int getHeight() const {
-        return m_height;
+        return m_screenInfo.yres;
     }
 
     void* getMappedAddr() {
         return m_addr;
     }
 
-    void setPixel(unsigned int x, unsigned int y, unsigned char a, unsigned char b) {
-        if (m_addr == nullptr) {
-            std::cout << "[!] Attempted to setPixel on nullptr\n";
-            return;
-        }
-        if (x >= m_width) {
-            std::cout << "x parameter (" << x << ") in Device#setPixel is outside acceptable range\n";
-            return;
-        }
-        if (y >= m_height) {
-            std::cout << "y parameter (" << y << ") in Device#setPixel is outside acceptable range\n";
-            return;
-        }
-        unsigned char* pixel = (unsigned char*)m_addr + m_width*m_bytesPerPixel*y + x*m_bytesPerPixel;
-        *(pixel) = a;
-        *(pixel+1) = b;
+    void setPixel(const unsigned int x, const unsigned int y, const uint8_t& red, const uint8_t& green, const uint8_t& blue, const uint8_t& transparency) {
+        int newPixel = createPixel(red, green, blue, transparency);
+        uint8_t* pixel = (uint8_t*)m_addr + m_bytesOnLine*y + x*m_bytesPerPixel;
+        memcpy(pixel, &newPixel, m_bytesPerPixel);
     }
 
-    int getPixel(unsigned int x, unsigned int y) {
-        if (m_addr == nullptr) {
-            std::cout << "[!] Attempted to getPixel on nullptr\n";
-            return -1;
-        }
-        if (x >= m_width) {
-            std::cout << "x parameter (" << x << ") in Device#setPixel is outside acceptable range\n";
-            return -1;
-        }
-        if (y >= m_height) {
-            std::cout << "y parameter (" << y << ") in Device#setPixel is outside acceptable range\n";
-            return -1;
-        }
-        unsigned char* pixel = (unsigned char*)m_addr + m_width*m_bytesPerPixel*y + x*m_bytesPerPixel;
-        return *(pixel);
-    }
+//    int[] getPixel(const unsigned int x, const unsigned int y) {
+//        if (!validPixelParams(x, y)) return -1;
+//
+//        uint8_t* pixel = (uint8_t*)m_addr + getWidth()*m_bytesPerPixel*y + x*m_bytesPerPixel;
+//        int rawPixel = *(pixel);
+//    }
 
     void mapToMemory() {
-        std::cout << "Mapping device " << m_devicePath << " to memory\n";
-        int fd = open(m_devicePath.c_str(), O_RDWR);
-        void* addr {mmap(nullptr, getWidth() * getHeight() * m_bytesPerPixel, PROT_WRITE, MAP_SHARED, fd, 0)};
-        close(fd);
-        m_addr = addr;
-        std::cout << "Device " << m_devicePath << " was mapped to memory (" << m_addr << ")\n";
+        mapToMemory(nullptr);
     }
 
     void mapToMemory(void* targetAddress) {
         std::cout << "Mapping device " << m_devicePath << " to memory (requesting address " << targetAddress << ")\n";
         int fd = open(m_devicePath.c_str(), O_RDWR);
-        void* addr {mmap(targetAddress, getWidth() * getHeight() * m_bytesPerPixel, PROT_WRITE, MAP_SHARED, fd, 0)};
+        void* addr {mmap(targetAddress, getWidth() * getHeight() * m_screenInfo.bits_per_pixel / 8, PROT_WRITE, MAP_SHARED, fd, 0)};
         close(fd);
         m_addr = addr;
         std::cout << "Device " << m_devicePath << " was mapped to memory (" << m_addr << ")\n";
@@ -92,7 +101,7 @@ public:
             std::cout << "[!] Attempted to unmap nullptr from memory\n";
             return;
         }
-        munmap(m_addr, getWidth() * getHeight() * m_bytesPerPixel);
+        munmap(m_addr, getWidth() * getHeight() * m_screenInfo.bits_per_pixel / 8);
         std::cout << "Device " << m_devicePath << " was unmapped from memory (" << m_addr << ")\n";
     }
 
@@ -105,26 +114,14 @@ int main() {
         perror("Error: reading device information");
         return 1;
     }
-    std::cout << "red.offset: " << vinfo.red.offset << "\n";
-    std::cout << "red.length: " << vinfo.red.length << "\n";
-    std::cout << "red.msb_right: " << vinfo.red.msb_right << "\n";
-    std::cout << "blue.offset: " << vinfo.blue.offset << "\n";
-    std::cout << "blue.length: " << vinfo.blue.length << "\n";
-    std::cout << "blue.msb_right: " << vinfo.blue.msb_right << "\n";
-    std::cout << "green.offset: " << vinfo.green.offset << "\n";
-    std::cout << "green.length: " << vinfo.green.length << "\n";
-    std::cout << "green.msb_right: " << vinfo.green.msb_right << "\n";
 
-    Device device{static_cast<int>(vinfo.xres_virtual),
-                  static_cast<int>(vinfo.yres_virtual),
-                  static_cast<int>(vinfo.bits_per_pixel),
-                  0};
+    Device device{vinfo, "/dev/fb0"};
     device.mapToMemory();
-    for (int y = 0; y < 1080; y++) {
-        for (int x = 0; x < 1920; x++) {
-            //tv says: 5 bits blue - 6 bits green - 5 bits red
-            //REVERSE EACH BYTE THEN COMBINE THEM - BECAUSE OF msb_right
-            device.setPixel(x, y, 0b00000000, 0b11111000);
+    for (int i = 0; i < 256; i++) {
+        for (int y = 0; y < 1080; y++) {
+            for (int x = 0; x < 1920; x++) {
+                device.setPixel(x, y, i, i, i, 255);
+            }
         }
     }
 
