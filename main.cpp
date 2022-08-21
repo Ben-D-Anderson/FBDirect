@@ -7,7 +7,6 @@
 #include <sys/ioctl.h>
 #include <linux/fb.h>
 #include <cstring>
-#include <chrono>
 
 class Device {
 private:
@@ -39,14 +38,6 @@ private:
         b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
         b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
         b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
-    }
-
-    static uint8_t decreaseBitLength(const uint8_t& sourceEightBit, const uint8_t& numberOfTargetBits) {
-        uint8_t bits;
-        if (numberOfTargetBits > 8) throw std::runtime_error("Illegal number of target bits - must be less than or equal to 8");
-        else if (numberOfTargetBits < 8) bits = sourceEightBit >> (8 - numberOfTargetBits);
-        else bits = sourceEightBit;
-        return bits;
     }
 
 public:
