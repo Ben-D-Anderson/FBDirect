@@ -6,15 +6,17 @@
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <linux/fb.h>
+//#include <chrono>
 #include <cstring>
 
 class Device {
 private:
     const fb_var_screeninfo m_screenInfo;
     const std::string m_devicePath;
-    const unsigned int m_bytesOnLine;
+    const unsigned int m_bytesOnLine, m_bytesOnScreen;
     const uint8_t m_bytesPerPixel;
     void* m_addr{nullptr};
+    uint8_t* m_buffer;
 
     int createPixel(const uint8_t& red, const uint8_t& green, const uint8_t& blue, const uint8_t& transparency) const {
         uint8_t redBits = red >> (8 - m_screenInfo.red.length);
@@ -43,7 +45,15 @@ private:
 public:
     Device(const fb_var_screeninfo screenInfo, std::string devicePath)
             : m_screenInfo(screenInfo), m_devicePath(std::move(devicePath)),
-              m_bytesPerPixel(screenInfo.bits_per_pixel / 8), m_bytesOnLine(screenInfo.xres * (screenInfo.bits_per_pixel / 8)) {}
+              m_bytesPerPixel(screenInfo.bits_per_pixel / 8),
+              m_bytesOnLine(screenInfo.xres * (screenInfo.bits_per_pixel / 8)),
+              m_bytesOnScreen(screenInfo.yres * screenInfo.xres * (screenInfo.bits_per_pixel / 8)) {
+        m_buffer = static_cast<uint8_t*>(malloc(m_bytesOnScreen));
+    }
+
+    ~Device() {
+        free(m_buffer);
+    }
 
     std::string getDevicePath() {
         return m_devicePath;
@@ -61,10 +71,17 @@ public:
         return m_addr;
     }
 
-    void setPixel(const unsigned int x, const unsigned int y, const uint8_t& red, const uint8_t& green, const uint8_t& blue, const uint8_t& transparency) {
+    void setBufferPixel(const unsigned int x, const unsigned int y, const uint8_t& red, const uint8_t& green, const uint8_t& blue, const uint8_t& transparency) {
         int newPixel = createPixel(red, green, blue, transparency);
-        uint8_t* pixel = (uint8_t*)m_addr + m_bytesOnLine*y + x*m_bytesPerPixel;
-        memcpy(pixel, &newPixel, m_bytesPerPixel);
+        uint8_t* newPixelPointer = static_cast<uint8_t*>(static_cast<void*>(&newPixel));
+        uint8_t* pixel = m_buffer + m_bytesOnLine*y + x*m_bytesPerPixel;
+        for (uint8_t i = 0; i < m_bytesPerPixel; i++) {
+            *(pixel + i) = *(newPixelPointer + i);
+        }
+    }
+
+    void renderBuffer() {
+        memcpy(m_addr, m_buffer, m_bytesOnScreen);
     }
 
 //    int[] getPixel(const unsigned int x, const unsigned int y) {
@@ -81,7 +98,7 @@ public:
     void mapToMemory(void* targetAddress) {
         std::cout << "Mapping device " << m_devicePath << " to memory (requesting address " << targetAddress << ")\n";
         int fd = open(m_devicePath.c_str(), O_RDWR);
-        void* addr {mmap(targetAddress, getWidth() * getHeight() * m_screenInfo.bits_per_pixel / 8, PROT_WRITE, MAP_SHARED, fd, 0)};
+        void* addr {mmap(targetAddress, m_bytesOnScreen, PROT_WRITE, MAP_SHARED, fd, 0)};
         close(fd);
         m_addr = addr;
         std::cout << "Device " << m_devicePath << " was mapped to memory (" << m_addr << ")\n";
@@ -92,10 +109,9 @@ public:
             std::cout << "[!] Attempted to unmap nullptr from memory\n";
             return;
         }
-        munmap(m_addr, getWidth() * getHeight() * m_screenInfo.bits_per_pixel / 8);
+        munmap(m_addr, m_bytesOnScreen);
         std::cout << "Device " << m_devicePath << " was unmapped from memory (" << m_addr << ")\n";
     }
-
 };
 
 int main() {
@@ -111,9 +127,13 @@ int main() {
     for (int i = 0; i < 256; i++) {
         for (int y = 0; y < 1080; y++) {
             for (int x = 0; x < 1920; x++) {
-                device.setPixel(x, y, i, i, i, 255);
+                device.setBufferPixel(x, y, i, i, i, 255);
             }
         }
+//        auto start = std::chrono::high_resolution_clock::now();
+        device.renderBuffer();
+//        auto finish = std::chrono::high_resolution_clock::now();
+//        std::cout << std::chrono::duration_cast<std::chrono::nanoseconds>(finish-start).count() << "ns\n";
     }
 
     return 0;
