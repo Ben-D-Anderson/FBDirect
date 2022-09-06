@@ -6,7 +6,6 @@
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <linux/fb.h>
-//#include <chrono>
 #include <cstring>
 
 class Device {
@@ -84,13 +83,6 @@ public:
         memcpy(m_addr, m_buffer, m_bytesOnScreen);
     }
 
-//    int[] getPixel(const unsigned int x, const unsigned int y) {
-//        if (!validPixelParams(x, y)) return -1;
-//
-//        uint8_t* pixel = (uint8_t*)m_addr + getWidth()*m_bytesPerPixel*y + x*m_bytesPerPixel;
-//        int rawPixel = *(pixel);
-//    }
-
     void mapToMemory() {
         mapToMemory(nullptr);
     }
@@ -115,14 +107,16 @@ public:
 };
 
 int main() {
-    int fd = open("/dev/fb0", O_RDWR);
+    const char* devicePath = "/dev/fb0";
+
+    int fd = open(devicePath, O_RDWR);
     fb_var_screeninfo vinfo{};
     if (ioctl(fd, FBIOGET_VSCREENINFO, &vinfo) == -1) {
         perror("Error: reading device information");
         return 1;
     }
 
-    Device device{vinfo, "/dev/fb0"};
+    Device device{vinfo, devicePath};
     device.mapToMemory();
     for (int i = 0; i < 256; i++) {
         for (int y = 0; y < 1080; y++) {
@@ -130,10 +124,7 @@ int main() {
                 device.setBufferPixel(x, y, i, i, i, 255);
             }
         }
-//        auto start = std::chrono::high_resolution_clock::now();
         device.renderBuffer();
-//        auto finish = std::chrono::high_resolution_clock::now();
-//        std::cout << std::chrono::duration_cast<std::chrono::nanoseconds>(finish-start).count() << "ns\n";
     }
 
     return 0;
