@@ -7,17 +7,31 @@
 #include <sys/ioctl.h>
 #include <linux/fb.h>
 #include <cstring>
+#include <chrono>
 
 class Device {
 private:
     const fb_var_screeninfo m_screenInfo;
     const std::string m_devicePath;
-    const unsigned int m_bytesOnLine, m_bytesOnScreen;
     const uint8_t m_bytesPerPixel;
+    const unsigned int m_bytesOnLine, m_bytesOnScreen;
     void* m_addr{nullptr};
     uint8_t* m_buffer;
 
-    int createPixel(const uint8_t& red, const uint8_t& green, const uint8_t& blue, const uint8_t& transparency) const {
+    static void reverseByte(uint8_t& b) {
+        b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+        b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+        b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+    }
+
+public:
+
+	struct Pixel {
+		int data;
+		Pixel(int pixel_data) : data(pixel_data) {}
+	};
+
+    Pixel createPixel(const uint8_t& red, const uint8_t& green, const uint8_t& blue, const uint8_t& transparency) const {
         uint8_t redBits = red >> (8 - m_screenInfo.red.length);
         if (m_screenInfo.red.msb_right != 0) reverseByte(redBits);
         uint8_t greenBits = green >> (8 - m_screenInfo.green.length);
@@ -32,16 +46,9 @@ private:
         if (m_screenInfo.green.length > 0) pixel += greenBits << m_screenInfo.green.offset;
         if (m_screenInfo.blue.length > 0) pixel += blueBits << m_screenInfo.blue.offset;
         if (m_screenInfo.transp.length > 0) pixel += transparentBits << m_screenInfo.transp.offset;
-        return pixel;
+        return Pixel{pixel};
     }
 
-    static void reverseByte(uint8_t& b) {
-        b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
-        b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
-        b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
-    }
-
-public:
     Device(const fb_var_screeninfo screenInfo, std::string devicePath)
             : m_screenInfo(screenInfo), m_devicePath(std::move(devicePath)),
               m_bytesPerPixel(screenInfo.bits_per_pixel / 8),
@@ -52,6 +59,7 @@ public:
 
     ~Device() {
         free(m_buffer);
+		unmapFromMemory();
     }
 
     std::string getDevicePath() {
@@ -70,17 +78,25 @@ public:
         return m_addr;
     }
 
-    void setBufferPixel(const unsigned int x, const unsigned int y, const uint8_t& red, const uint8_t& green, const uint8_t& blue, const uint8_t& transparency) {
-        int newPixel = createPixel(red, green, blue, transparency);
-        uint8_t* newPixelPointer = static_cast<uint8_t*>(static_cast<void*>(&newPixel));
-        uint8_t* pixel = m_buffer + m_bytesOnLine*y + x*m_bytesPerPixel;
+	//creates a new pixel on the stack every time this method is called
+    void setBufferPixel(const unsigned int& x, const unsigned int& y, const uint8_t& red, const uint8_t& green, const uint8_t& blue, const uint8_t& transparency) {
+        Pixel newPixel = createPixel(red, green, blue, transparency);
+    	setBufferPixel(x, y, newPixel);
+	}
+
+	//can re-use created pixels
+	void setBufferPixel(const unsigned int& x, const unsigned int& y, Pixel& pixel) {
+		uint8_t* newPixelPointer = static_cast<uint8_t*>(static_cast<void*>(&pixel.data));
+        uint8_t* currentPixel = m_buffer + m_bytesOnLine*y + x*m_bytesPerPixel;
         for (uint8_t i = 0; i < m_bytesPerPixel; i++) {
-            *(pixel + i) = *(newPixelPointer + i);
+            *(currentPixel + i) = *(newPixelPointer + i);
         }
-    }
+	}
+
+	//todo: implement getBufferPixel()
 
     void renderBuffer() {
-        memcpy(m_addr, m_buffer, m_bytesOnScreen);
+		memcpy(m_addr, m_buffer, m_bytesOnScreen);
     }
 
     void mapToMemory() {
@@ -107,7 +123,7 @@ public:
 };
 
 int main() {
-    const char* devicePath = "/dev/fb0";
+	const char* devicePath = "/dev/fb0";
 
     int fd = open(devicePath, O_RDWR);
     fb_var_screeninfo vinfo{};
@@ -118,14 +134,19 @@ int main() {
 
     Device device{vinfo, devicePath};
     device.mapToMemory();
-    for (int i = 0; i < 256; i++) {
-        for (int y = 0; y < 1080; y++) {
-            for (int x = 0; x < 1920; x++) {
-                device.setBufferPixel(x, y, i, i, i, 255);
+	auto begin = std::chrono::high_resolution_clock::now();
+    for (unsigned int i = 0; i < 256; i++) {
+		Device::Pixel pixel = device.createPixel(abs(128-i), i, 255-i, 255);
+		for (unsigned int y = 0; y < device.getHeight(); y++) {
+            for (unsigned int x = 0; x < device.getWidth(); x++) {
+                device.setBufferPixel(x, y, pixel);
             }
         }
-        device.renderBuffer();
-    }
+		device.renderBuffer();
+	}
+	auto end = std::chrono::high_resolution_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+    printf("Time measured: %.3f seconds.\n", elapsed.count() * 1e-9);
 
     return 0;
 }
