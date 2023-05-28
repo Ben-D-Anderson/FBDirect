@@ -2,8 +2,8 @@
 #include <string>
 #include <utility>
 #include <fcntl.h>
-#include <unistd.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #include <sys/ioctl.h>
 #include <linux/fb.h>
 #include <cstring>
@@ -12,9 +12,10 @@
 class Device {
 private:
     const fb_var_screeninfo m_screenInfo;
-    const std::string m_devicePath;
+    const fb_fix_screeninfo m_fixScreenInfo;
+	const std::string m_devicePath;
     const uint8_t m_bytesPerPixel;
-    const unsigned int m_bytesOnLine, m_bytesOnScreen;
+    const unsigned int m_bytesOnLine, m_bytesOnScreen, m_pixelBytesOnLine;
     void* m_addr{nullptr};
     uint8_t* m_buffer;
 
@@ -88,14 +89,23 @@ public:
 		return pixelStruct;
     }
 
-	static const fb_var_screeninfo getScreenInfo(int* fileDescriptor) {
+	static const std::pair<fb_var_screeninfo, fb_fix_screeninfo> getScreenInfo(int* fileDescriptor) {
     	fb_var_screeninfo vinfo{};
 		if (ioctl(*fileDescriptor, FBIOGET_VSCREENINFO, &vinfo) == -1) {
-			perror("Error reading device information");
+			perror("Error reading variable screen info");
     	}
-		return vinfo;
+		fb_fix_screeninfo finfo{};
+		if (ioctl(*fileDescriptor, FBIOGET_FSCREENINFO, &finfo) == -1) {
+			perror("Error reading fixed screen info");
+		}
+		return std::pair<fb_var_screeninfo, fb_fix_screeninfo>{vinfo, finfo};
 	}
-	
+
+	//bypasses the buffer
+	const void blankScreen() {
+		memset(m_addr, 0, m_bytesOnScreen);
+	}
+
 	//returns boolean denoting success of activation
 	static const bool activateScreen(int* fileDescriptor, fb_var_screeninfo& screenInfo) {
 		screenInfo.activate |= FB_ACTIVATE_NOW | FB_ACTIVATE_FORCE;
@@ -106,11 +116,13 @@ public:
 		return true;
 	}
 
-    Device(const fb_var_screeninfo screenInfo, std::string devicePath)
-            : m_screenInfo(screenInfo), m_devicePath(std::move(devicePath)),
-              m_bytesPerPixel(screenInfo.bits_per_pixel / 8),
-              m_bytesOnLine(screenInfo.xres * (screenInfo.bits_per_pixel / 8)),
-              m_bytesOnScreen(screenInfo.yres * screenInfo.xres * (screenInfo.bits_per_pixel / 8)) {
+    Device(const std::pair<fb_var_screeninfo, fb_fix_screeninfo>& screenInfo, std::string devicePath)
+            : m_screenInfo(std::get<0>(screenInfo)), m_fixScreenInfo(std::get<1>(screenInfo)),
+			  m_devicePath(devicePath),
+              m_bytesPerPixel(m_screenInfo.bits_per_pixel / 8),
+              m_bytesOnLine(m_fixScreenInfo.line_length),
+			  m_pixelBytesOnLine(m_screenInfo.xres * (m_screenInfo.bits_per_pixel / 8)),
+              m_bytesOnScreen(m_screenInfo.yres * m_bytesOnLine) {
         m_buffer = static_cast<uint8_t*>(malloc(m_bytesOnScreen));
     }
 
@@ -195,13 +207,12 @@ int main() {
 	
 	const char* devicePath = "/dev/fb0";
 	int fd = open(devicePath, O_RDWR);
-
-    fb_var_screeninfo vinfo{Device::getScreenInfo(&fd)};
-	if (vinfo.xres == 0 || vinfo.yres == 0)
+	auto info{Device::getScreenInfo(&fd)};
+	if (std::get<0>(info).xres == 0 || std::get<0>(info).yres == 0)
 		return 1;
-	Device::activateScreen(&fd, vinfo);
-
-    Device device{vinfo, devicePath};
+	Device::activateScreen(&fd, std::get<0>(info));
+    
+	Device device{info, devicePath};
 	device.mapToMemory();
 	
 	auto begin = std::chrono::high_resolution_clock::now();
@@ -218,8 +229,9 @@ int main() {
     auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
     printf("Time measured: %.3f seconds.\n", elapsed.count() * 1e-9);
 	
+	device.blankScreen();
 	device.unmapFromMemory();
-
+	
 	close(fd);
 	
 	showConsoleCursor();
