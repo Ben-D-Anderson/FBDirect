@@ -88,13 +88,22 @@ public:
 		return pixelStruct;
     }
 
-	static const fb_var_screeninfo getScreenInfo(const char* devicePath) {
-		int fd = open(devicePath, O_RDWR);
+	static const fb_var_screeninfo getScreenInfo(int* fileDescriptor) {
     	fb_var_screeninfo vinfo{};
-    	if (ioctl(fd, FBIOGET_VSCREENINFO, &vinfo) == -1) {
-        	perror("Error: reading device information");
+		if (ioctl(*fileDescriptor, FBIOGET_VSCREENINFO, &vinfo) == -1) {
+			perror("Error reading device information");
     	}
 		return vinfo;
+	}
+	
+	//returns boolean denoting success of activation
+	static const bool activateScreen(int* fileDescriptor, fb_var_screeninfo& screenInfo) {
+		screenInfo.activate |= FB_ACTIVATE_NOW | FB_ACTIVATE_FORCE;
+		if(ioctl(*fileDescriptor, FBIOPUT_VSCREENINFO, &screenInfo) == -1) {
+  			perror("Error activing frame buffer");
+			return false;
+		}
+		return true;
 	}
 
     Device(const fb_var_screeninfo screenInfo, std::string devicePath)
@@ -106,8 +115,8 @@ public:
     }
 
     ~Device() {
-        free(m_buffer);
 		unmapFromMemory();
+        free(m_buffer);
     }
 
     std::string getDevicePath() {
@@ -155,13 +164,9 @@ public:
     }
 
     void mapToMemory() {
-        mapToMemory(nullptr);
-    }
-
-    void mapToMemory(void* targetAddress) {
-        std::cout << "Mapping device " << m_devicePath << " to memory (requesting address " << targetAddress << ")\n";
+        std::cout << "Mapping device " << m_devicePath << " to memory\n";
         int fd = open(m_devicePath.c_str(), O_RDWR);
-        void* addr {mmap(targetAddress, m_bytesOnScreen, PROT_WRITE, MAP_SHARED, fd, 0)};
+        void* addr {mmap(nullptr, m_bytesOnScreen, PROT_WRITE, MAP_SHARED, fd, 0)};
         close(fd);
         m_addr = addr;
         std::cout << "Device " << m_devicePath << " was mapped to memory (" << m_addr << ")\n";
@@ -169,12 +174,12 @@ public:
 
     void unmapFromMemory() {
         if (m_addr == nullptr) {
-            std::cout << "[!] Attempted to unmap nullptr from memory\n";
             return;
         }
         munmap(m_addr, m_bytesOnScreen);
         std::cout << "Device " << m_devicePath << " was unmapped from memory (" << m_addr << ")\n";
-    }
+    	m_addr = nullptr;
+	}
 };
 
 void hideConsoleCursor() {
@@ -186,20 +191,22 @@ void showConsoleCursor() {
 }
 
 int main() {
+	hideConsoleCursor();
+	
 	const char* devicePath = "/dev/fb0";
+	int fd = open(devicePath, O_RDWR);
 
-    fb_var_screeninfo vinfo{Device::getScreenInfo(devicePath)};
+    fb_var_screeninfo vinfo{Device::getScreenInfo(&fd)};
 	if (vinfo.xres == 0 || vinfo.yres == 0)
 		return 1;
+	Device::activateScreen(&fd, vinfo);
 
     Device device{vinfo, devicePath};
-    
-	hideConsoleCursor();
-
 	device.mapToMemory();
+	
 	auto begin = std::chrono::high_resolution_clock::now();
     for (unsigned int i = 0; i < 256; i++) {
-		Device::Pixel pixel = device.createPixel(abs(128-i), i, 255-i, 255);
+		Device::Pixel pixel = device.createPixel(255-i, i, 255-i, 255);
 		for (unsigned int y = 0; y < device.getHeight(); y++) {
             for (unsigned int x = 0; x < device.getWidth(); x++) {
                 device.setBufferPixel(x, y, pixel);
@@ -210,7 +217,11 @@ int main() {
 	auto end = std::chrono::high_resolution_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
     printf("Time measured: %.3f seconds.\n", elapsed.count() * 1e-9);
+	
+	device.unmapFromMemory();
 
+	close(fd);
+	
 	showConsoleCursor();
 
     return 0;
