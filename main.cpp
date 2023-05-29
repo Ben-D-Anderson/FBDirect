@@ -41,19 +41,19 @@ class Device {
 
 		Device(const Device& other) = delete;
 
-		std::string getDevicePath() {
+		inline std::string getDevicePath() {
 			return m_devicePath;
 		}
 
-		unsigned int getWidth() const {
+		inline unsigned int getWidth() const {
 			return m_screenInfo.var.xres;
 		}
 
-		unsigned int getHeight() const {
+		inline unsigned int getHeight() const {
 			return m_screenInfo.var.yres;
 		}
 
-		void* getMappedAddr() {
+		inline void* getMappedAddr() {
 			return m_addr;
 		}
 
