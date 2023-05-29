@@ -13,4 +13,12 @@ struct ScreenInfo {
 ScreenInfo getScreenInfo(int& fileDescriptor);
 bool activateScreen(int& fileDescriptor, ScreenInfo& screenInfo);
 
+inline void hideConsoleCursor() {
+	fputs("\e[?25l", stdout);
+}
+
+inline void showConsoleCursor() {
+	fputs("\e[?25h", stdout);
+}
+
 #endif
