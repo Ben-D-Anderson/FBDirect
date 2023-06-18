@@ -21,3 +21,28 @@ void drawLine(Device& device, Pixel& pixel, const unsigned int& startX, const un
 		device.setBufferPixel(x, y, pixel);
 	}
 }
+
+void drawVerticalLine(Device& device, Pixel& pixel, const unsigned int& x, const unsigned int& startY, const unsigned int& endY) {
+	for (unsigned int y = startY; y <= endY; y++) {
+		device.setBufferPixel(x, y, pixel);
+	}
+}
+
+void drawHorizontalLine(Device& device, Pixel& pixel, const unsigned int& y, const unsigned int& startX, const unsigned int& endX) {
+	for (unsigned int x = startX; x <= endX; x++) {
+		device.setBufferPixel(x, y, pixel);
+	}
+}
+
+void drawRectangle(Device& device, Pixel& pixel, const unsigned int& startX, const unsigned int& startY, const unsigned int& endX, const unsigned int& endY) {
+	drawHorizontalLine(device, pixel, startY, startX, endX);
+	drawHorizontalLine(device, pixel, endY, startX, endX);
+	drawVerticalLine(device, pixel, startX, startY, endY);
+	drawVerticalLine(device, pixel, endX, startY, endY);
+}
+
+void fillRectangle(Device& device, Pixel& pixel, const unsigned int& startX, const unsigned int& startY, const unsigned int& endX, const unsigned int& endY) {
+	for (unsigned int y = startY; y <= endY; y++) {
+		drawHorizontalLine(device, pixel, y, startX, endX);
+	}
+}
