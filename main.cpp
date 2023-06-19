@@ -10,19 +10,15 @@
 void demo_colourChangingScreen(Device& device, ScreenInfo& info) {
 	for (unsigned int i = 0; i < 256; i++) {
 		Pixel pixel = createPixel(info, 255-i, i, 255-i, 255);
-		for (unsigned int y = 0; y < device.getHeight(); y++) {
-			for (unsigned int x = 0; x < device.getWidth(); x++) {
-				device.setBufferPixel(x, y, pixel);
-			}
-		}
+		fillRectangle(device, pixel, 0, 0, device.getWidth() - 1, device.getHeight() - 1);
 		device.renderBuffer();
 	}
 }
 
 void demo_gradualScreenFill(Device& device, ScreenInfo& info) {
 	Pixel pixel = createPixel(info, 255, 255, 255, 255);
-	for (int i = 0; i < device.getWidth(); i++) {
-		drawLine(device, pixel, i, 0, i, device.getHeight() - 1);
+	for (int x = 0; x < device.getWidth(); x++) {
+		drawVerticalLine(device, pixel, x, 0, device.getHeight() - 1);
 		device.renderBuffer();
 		usleep(3000);
 	}
